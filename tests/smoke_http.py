@@ -91,6 +91,17 @@ def main():
         assert "version" in state()
         checks.append("state reports version " + state()["version"])
 
+        log_sync = request("/api/log-sync")
+        assert log_sync["config"]["git"] is False, log_sync
+        checks.append("GET /api/log-sync reports the plain data directory")
+
+        try:
+            request("/api/log-sync", {})
+            raise AssertionError("log sync ran on a non-git directory")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 502, exc.code
+        checks.append("POST /api/log-sync refuses a directory without git")
+
         # start -> work
         started = request("/api/cycle/start", {})
         assert started["cycle"]["phase"] == "work", started

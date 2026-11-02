@@ -236,6 +236,18 @@ class CycleTests(unittest.TestCase):
             broken.submit_feedback("progress", "Cannot write", "choose_task")
         self.assertEqual(broken.snapshot()["phase"], "feedback")
 
+    def test_duplicate_rows_with_the_same_session_id_are_hidden(self):
+        self.finish_work()
+        self.cycle.submit_feedback("progress", "Once only", "finish")
+        path = self.root / "sessions.jsonl"
+        line = path.read_text(encoding="utf-8").strip()
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+        self.assertEqual(len(path.read_text(encoding="utf-8").strip().splitlines()), 2)
+        self.assertEqual(len(self.store.records()), 1)
+        self.assertEqual(self.store.summary_for(self.store.days()[0])["sessions"], 1)
+
+
     def test_jsonl_file_shape(self):
         self.finish_work()
         self.cycle.submit_feedback("progress", "Made progress", "finish")

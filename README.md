@@ -62,6 +62,47 @@ You can paste a different git URL and press **Save remote** to repoint `origin` 
 
 The URL must be a plain git URL (`https://`, `ssh://`, `git://` or `git@host:path`); anything else is refused before git is called.
 
+## Log sync
+
+The session log can live in its own private repository so a session written on
+one machine shows up on the other. It is deliberately **not** the task
+repository: a log conflict must never block `dstask sync`, and dstask's own
+`git add -A` commits must not swallow log rows.
+
+Setup once per machine, with the data directory itself as the repository:
+
+```bat
+cd %USERPROFILE%\.intent-log
+git init -b main
+git remote add origin git@host:you/intent-log-data.git
+```
+
+Two files matter in that repository:
+
+```
+.gitignore      state.json, *.tmp        (device-local state never leaves the machine)
+.gitattributes  sessions.jsonl text eol=lf merge=union
+```
+
+`state.json` holds the running cycle and must stay local — syncing it would let
+two machines fight over one timer. `merge=union` lets both devices' appended
+rows survive a merge instead of turning into conflict markers.
+
+Then use the **Log sync** panel: it shows the remote, branch, ahead/behind
+counts, and last result; **Sync now** commits new rows, fetches, merges and
+pushes. Two safety rules are built in:
+
+- the pull is a **merge, not a rebase**, because a rebase does not run the
+  union driver and can silently drop the other device's rows;
+- before pushing, the set of `session_id`s is compared with what it was before
+  the pull, and if any row would disappear nothing is pushed.
+
+A real merge conflict (for example, no union attribute) is reported with the
+path to fix, and the repository is left clean rather than half-merged.
+
+If you only ever use one machine, skip all of this: the panel simply reports
+that the data directory is not a git repository.
+
 ## HTTP API (for agents)
 
 Bound to `127.0.0.1` only. Every POST needs the `X-Intent-Log: 1` header; bodies are JSON.
@@ -73,6 +114,7 @@ Bound to `127.0.0.1` only. Every POST needs the `X-Intent-Log: 1` header; bodies
 | GET | `/api/tasks/completed` | recently completed tasks |
 | GET | `/api/records?date=YYYY-MM-DD` | records for one day, plus the list of days |
 | GET | `/api/sync` | dstask repository config and last sync result |
+| GET | `/api/log-sync` | log repository config and last sync result |
 | POST | `/api/cycle/start` | `{"task_id": "<uuid>"}`, or no task at all |
 | POST | `/api/cycle/pause` | pause, or resume if already paused |
 | POST | `/api/cycle/end` | end the segment early and go to feedback |
@@ -81,7 +123,9 @@ Bound to `127.0.0.1` only. Every POST needs the `X-Intent-Log: 1` header; bodies
 | POST | `/api/cycle/skip-break` | end the break now |
 | POST | `/api/tasks` | `{"description","project"}` creates a task |
 | POST | `/api/sync` | runs `dstask sync` |
-| POST | `/api/sync/remote` | `{"url"}` repoints `origin` |
+| POST | `/api/sync/remote` | `{"url"}` repoints the task repository's `origin` |
+| POST | `/api/log-sync` | commit, merge and push the session log |
+| POST | `/api/log-sync/remote` | `{"url"}` repoints the log repository's `origin` |
 
 ```bash
 curl -s http://127.0.0.1:8770/api/state
@@ -92,7 +136,8 @@ curl -s -X POST http://127.0.0.1:8770/api/cycle/start -H "X-Intent-Log: 1" -H "C
 
 - No day planning and no scoring; it never guesses whether a segment was "good".
 - No window or browser monitoring.
-- No cross-device sync, no CSV export.
+- No CSV export.
+- Log sync is manual: nothing is committed or pushed until you press **Sync now**.
 - Time while the service is stopped is not counted as work: on restart the cycle resumes from the last saved state instead of adding offline time.
 - The 20-20-20 eye reminder from `rest.reminder` is not ported yet.
 
@@ -103,9 +148,9 @@ python -m unittest discover -s tests
 python tests\smoke_http.py
 ```
 
-- `tests/test_cycle.py` — cycle state machine (pause excluded from work time, early end, restart recovery, failed write keeps feedback, one row per segment).
-- `tests/test_sync.py` — git remote reading, repointing, and URL validation on a temporary repository.
-- `tests/smoke_http.py` — starts the real service and walks the whole path. It deliberately starts a cycle **without** a task so nothing in the real task list is created or completed, and it never calls `POST /api/sync` (that would hit the network).
+- `tests/test_cycle.py` — cycle state machine (pause excluded from work time, early end, restart recovery, failed write keeps feedback, one row per segment, duplicate `session_id` rows hidden).
+- `tests/test_sync.py` — git remote reading, repointing, URL validation, log commit/push, union merge keeping both devices' rows, a denied push when the merge would lose a row, and a reported conflict that leaves the repository clean. All on temporary repositories.
+- `tests/smoke_http.py` — starts the real service and walks the whole path. It deliberately starts a cycle **without** a task so nothing in the real task list is created or completed, and it never calls `POST /api/sync` or `POST /api/log-sync` (both would touch real repositories or the network).
 
 ## License
 

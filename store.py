@@ -23,6 +23,13 @@ class SessionStore:
             handle.flush()
 
     def _iter(self):
+        """Yield records, dropping byte-identical duplicates.
+
+        Syncing the log through git can, in rare cases, leave the same row on
+        both sides of a merge. Deduplicating on session_id keeps the table
+        honest without rewriting the file.
+        """
+        seen = set()
         try:
             with self.path.open(encoding="utf-8") as handle:
                 for line in handle:
@@ -30,9 +37,15 @@ class SessionStore:
                     if not line:
                         continue
                     try:
-                        yield json.loads(line)
+                        record = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    key = record.get("session_id")
+                    if key:
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                    yield record
         except FileNotFoundError:
             return
         except OSError:

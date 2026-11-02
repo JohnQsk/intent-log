@@ -310,12 +310,17 @@ async function startCycle(taskUuid) {
 
 // -------------------------------------------------------------------- sync
 
-function renderSync(data) {
+const SYNC_PANELS = [
+  { key: 'task', endpoint: '/api/sync', prefix: 'sync' },
+  { key: 'log', endpoint: '/api/log-sync', prefix: 'log-sync' },
+];
+
+function renderSync(panel, data) {
   const config = data.config || {};
-  el('sync-remote').value = config.remote || '';
+  el(panel.prefix + '-remote').value = config.remote || '';
   const bits = [];
   if (!config.git) {
-    bits.push('No git repository at ' + (config.path || '~/.dstask'));
+    bits.push('No git repository at ' + (config.path || 'the data directory'));
   } else {
     if (config.branch) bits.push('branch ' + config.branch);
     if (config.behind !== null && config.behind !== undefined) bits.push(config.behind + ' behind');
@@ -323,9 +328,9 @@ function renderSync(data) {
     if (config.dirty) bits.push('uncommitted changes');
     if (!config.remote) bits.push('no origin remote');
   }
-  el('sync-status').textContent = bits.join(' · ');
+  el(panel.prefix + '-status').textContent = bits.join(' · ');
 
-  const output = el('sync-output');
+  const output = el(panel.prefix + '-output');
   if (data.last) {
     output.hidden = false;
     output.textContent = (data.last.ok ? 'Last sync ' : 'Last sync failed ') +
@@ -333,11 +338,11 @@ function renderSync(data) {
   }
 }
 
-async function loadSync() {
+async function loadSync(panel) {
   try {
-    renderSync(await api('/api/sync'));
+    renderSync(panel, await api(panel.endpoint));
   } catch (error) {
-    el('sync-status').textContent = 'Could not read the sync config';
+    el(panel.prefix + '-status').textContent = 'Could not read the sync config';
   }
 }
 
@@ -425,38 +430,40 @@ el('history-date').addEventListener('change', () => {
   loadHistory();
 });
 
-el('sync-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const url = el('sync-remote').value.trim();
-  if (!url) {
-    showError('Enter a git URL for the dstask repository');
-    return;
-  }
-  if (!window.confirm('Point dstask origin at\n' + url + '\n\nThis changes only the remote URL; task data is untouched.')) {
-    return;
-  }
-  showError('');
-  try {
-    renderSync(await post('/api/sync/remote', { url: url }));
-  } catch (error) {
-    showError(error.message);
-  }
-});
+SYNC_PANELS.forEach((panel) => {
+  el(panel.prefix + '-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const url = el(panel.prefix + '-remote').value.trim();
+    if (!url) {
+      showError('Enter a git URL for the ' + panel.key + ' repository');
+      return;
+    }
+    if (!window.confirm('Point the ' + panel.key + ' repository origin at\n' + url +
+        '\n\nThis only changes the remote URL; no data is rewritten.')) {
+      return;
+    }
+    showError('');
+    try {
+      renderSync(panel, await post(panel.endpoint + '/remote', { url: url }));
+    } catch (error) {
+      showError(error.message);
+    }
+  });
 
-el('sync-now').addEventListener('click', async () => {
-  const button = el('sync-now');
-  button.disabled = true;
-  showError('');
-  try {
-    const result = await post('/api/sync');
-    renderSync(result);
-    loadTasks();
-  } catch (error) {
-    showError(error.message);
-    loadSync();
-  } finally {
-    button.disabled = false;
-  }
+  el(panel.prefix + '-now').addEventListener('click', async () => {
+    const button = el(panel.prefix + '-now');
+    button.disabled = true;
+    showError('');
+    try {
+      renderSync(panel, await post(panel.endpoint));
+      if (panel.key === 'task') loadTasks();
+    } catch (error) {
+      showError(error.message);
+      loadSync(panel);
+    } finally {
+      button.disabled = false;
+    }
+  });
 });
 
 // --------------------------------------------------------------------- boot
@@ -466,7 +473,7 @@ refresh().then(() => {
   if (state && state.cycle.phase === 'idle') loadTasks();
 });
 loadHistory();
-loadSync();
+SYNC_PANELS.forEach(loadSync);
 setInterval(tick, 250);
 setInterval(refresh, 1000);
 setInterval(() => {

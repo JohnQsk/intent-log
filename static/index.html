@@ -114,7 +114,7 @@
     <p class="hint">
       <code>dstask sync</code> runs <code>git pull</code> then <code>git push</code>
       inside <code>~/.dstask</code>. Point <code>origin</code> at the repository you
-      want to sync with.
+      want to sync tasks with.
     </p>
     <form id="sync-form" class="add">
       <input id="sync-remote" placeholder="git@host:user/tasks.git" spellcheck="false">
@@ -122,6 +122,24 @@
       <button type="button" class="primary" id="sync-now">Sync now</button>
     </form>
     <pre class="sync-output" id="sync-output" hidden></pre>
+  </section>
+
+  <section class="card" id="log-sync-card">
+    <div class="picker-head">
+      <h2>Log sync</h2>
+      <span class="sub" id="log-sync-status">Reading&hellip;</span>
+    </div>
+    <p class="hint">
+      Only <code>sessions.jsonl</code> leaves this machine.
+      <code>state.json</code> stays local, and this repository is separate from the
+      task repository so a log conflict can never block task sync.
+    </p>
+    <form id="log-sync-form" class="add">
+      <input id="log-sync-remote" placeholder="git@host:user/intent-log-data.git" spellcheck="false">
+      <button type="submit" class="ghost">Save remote</button>
+      <button type="button" class="primary" id="log-sync-now">Sync now</button>
+    </form>
+    <pre class="sync-output" id="log-sync-output" hidden></pre>
   </section>
 
   <p class="error" id="error" role="alert"></p>

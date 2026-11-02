@@ -19,10 +19,10 @@ from urllib.parse import parse_qs, urlsplit
 
 from cycle import CycleError, CycleManager, TimerThread, ValidationError
 from store import SessionStore
-from syncer import DstaskRepo, SyncError
+from syncer import DstaskRepo, LogRepo, SyncError
 from tasks import DstaskError, DstaskTasks
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -34,14 +34,15 @@ class IntentLogServer(ThreadingHTTPServer):
     allow_reuse_address = False
     daemon_threads = True
 
-    def __init__(self, address, handler, cycle, tasks, store, repo, public_url=""):
+    def __init__(self, address, handler, cycle, tasks, store, task_repo, log_repo):
         super().__init__(address, handler)
         self.cycle = cycle
         self.tasks = tasks
         self.store = store
-        self.repo = repo
-        self.public_url = public_url
-        self.last_sync = None
+        self.task_repo = task_repo
+        self.log_repo = log_repo
+        self.public_url = ""
+        self.last_sync = {"task": None, "log": None}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -99,10 +100,15 @@ class Handler(BaseHTTPRequestHandler):
             "today": self.server.store.summary_for(today),
         }
 
-    def _sync_payload(self):
-        return {
-            "config": self.server.repo.status(),
-            "last": self.server.last_sync,
+    def _sync_payload(self, kind):
+        repo = self.server.log_repo if kind == "log" else self.server.task_repo
+        return {"config": repo.status(), "last": self.server.last_sync[kind]}
+
+    def _record_sync(self, kind, ok, message):
+        self.server.last_sync[kind] = {
+            "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "ok": ok,
+            "message": message,
         }
 
     # ---------------------------------------------------------------- routes
@@ -117,8 +123,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"tasks": self.server.tasks.list_open()})
             elif path == "/api/tasks/completed":
                 self._send_json({"tasks": self.server.tasks.list_completed()})
-            elif path == "/api/sync":
-                self._send_json(self._sync_payload())
+            elif path in ("/api/sync", "/api/log-sync"):
+                self._send_json(
+                    self._sync_payload("log" if path == "/api/log-sync" else "task")
+                )
             elif path == "/api/records":
                 query = parse_qs(parts.query)
                 day = (query.get("date") or [date.today().isoformat()])[0]
@@ -159,6 +167,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path
         cycle = self.server.cycle
+        kind = "log" if path.startswith("/api/log-sync") else "task"
         try:
             payload = self._read_json()
             if path == "/api/cycle/start":
@@ -196,19 +205,17 @@ class Handler(BaseHTTPRequestHandler):
                 task = self.server.tasks.add(description.strip(), project.strip())
                 self._send_json({"task": task}, 201)
                 return
-            elif path == "/api/sync":
-                output = self.server.repo.sync()
-                self.server.last_sync = {
-                    "at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                    "ok": True,
-                    "message": output or "Already up to date",
-                }
-                self._send_json({"output": output, **self._sync_payload()})
+            elif path in ("/api/sync", "/api/log-sync"):
+                repo = self.server.log_repo if kind == "log" else self.server.task_repo
+                output = repo.sync()
+                self._record_sync(kind, True, output or "Already up to date")
+                self._send_json({"output": output, **self._sync_payload(kind)})
                 return
-            elif path == "/api/sync/remote":
+            elif path in ("/api/sync/remote", "/api/log-sync/remote"):
                 url = payload.get("url")
-                status = self.server.repo.set_remote(url)
-                self._send_json({"config": status, "last": self.server.last_sync})
+                repo = self.server.log_repo if kind == "log" else self.server.task_repo
+                status = repo.set_remote(url)
+                self._send_json({"config": status, "last": self.server.last_sync[kind]})
                 return
             else:
                 self._error("Not found", 404)
@@ -225,13 +232,11 @@ class Handler(BaseHTTPRequestHandler):
             self._error(str(exc), 409)
         except SyncError as exc:
             message = str(exc)
-            if path == "/api/sync":
-                self.server.last_sync = {
-                    "at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                    "ok": False,
-                    "message": message,
-                }
-            self._error(message, 400 if path == "/api/sync/remote" else 502)
+            if "remote" in urlsplit(path).path:
+                self._error(message, 400)
+            else:
+                self._record_sync(kind, False, message)
+                self._error(message, 502)
         except DstaskError as exc:
             self._error(str(exc), 502)
         except OSError as exc:
@@ -267,7 +272,8 @@ def main():
     data_dir.mkdir(parents=True, exist_ok=True)
     store = SessionStore(data_dir / "sessions.jsonl")
     tasks = DstaskTasks()
-    repo = DstaskRepo()
+    task_repo = DstaskRepo()
+    log_repo = LogRepo(data_dir)
     cycle = CycleManager(
         store=store,
         tasks=tasks,
@@ -278,7 +284,7 @@ def main():
 
     try:
         server = IntentLogServer(
-            (args.host, args.port), Handler, cycle, tasks, store, repo
+            (args.host, args.port), Handler, cycle, tasks, store, task_repo, log_repo
         )
     except OSError as exc:
         logger.error("Cannot bind %s:%s (%s)", args.host, args.port, exc)
@@ -300,6 +306,10 @@ def main():
 
     logger.info("intent-log %s is running: %s", VERSION, url)
     logger.info("Data: %s", data_dir)
+    if not log_repo.status()["git"]:
+        logger.info(
+            "Log sync is off: %s is not a git repository yet", data_dir
+        )
     if not args.no_browser:
         webbrowser.open(url)
 

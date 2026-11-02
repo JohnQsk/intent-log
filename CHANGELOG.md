@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-11-02
+
+### Added
+
+- Log sync: the data directory can be its own private git repository, so
+  sessions written on one machine appear on the other.
+- **Log sync** panel and `GET /api/log-sync`, `POST /api/log-sync`,
+  `POST /api/log-sync/remote`.
+- Pull uses a merge instead of a rebase: a rebase does not run the `union`
+  merge driver and can silently drop the other device's rows.
+- Post-merge guard: the set of `session_id`s is compared before and after the
+  pull, and nothing is pushed if a row would be lost.
+- `SessionStore` hides duplicate rows that share a `session_id`.
+
+### Changed
+
+- `syncer.py` split into `GitRepo`, `DstaskRepo` and `LogRepo`; the two
+  repositories are configured and synced independently.
+- Documented the one-time `git init` setup and the required `.gitignore` /
+  `.gitattributes` contents.
+
 ## [0.1.1] - 2026-11-02
 
 ### Added
