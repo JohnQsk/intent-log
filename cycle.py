@@ -139,12 +139,12 @@ class CycleManager:
     def start(self, task_uuid=None):
         with self._lock:
             if self._phase != "idle":
-                raise CycleError("已经有一个周期在进行中，先结束或取消它")
+                raise CycleError("A cycle is already running; end or cancel it first")
             task = None
             if task_uuid:
                 task = self._tasks.find_open(task_uuid)
                 if task is None:
-                    raise ValidationError("找不到这个待办任务，可能已完成或已被删除")
+                    raise ValidationError("That task was not found; it may be completed or deleted")
             self._task = (
                 {
                     "uuid": task["uuid"],
@@ -173,7 +173,7 @@ class CycleManager:
     def pause(self):
         with self._lock:
             if self._phase not in ("work", "break"):
-                raise CycleError("当前没有可以暂停的计时")
+                raise CycleError("There is no running timer to pause")
             if not self._paused:
                 if self._phase == "work":
                     self._elapsed_offset = self._work_elapsed()
@@ -196,9 +196,9 @@ class CycleManager:
         """Discard the current segment without recording it (work phase only)."""
         with self._lock:
             if self._phase == "feedback":
-                raise CycleError("已经到反馈这一步了，请提交或先取消记录")
+                raise CycleError("This segment is already waiting for feedback; submit it instead")
             if self._phase not in ("work", "break"):
-                raise CycleError("当前没有进行中的周期")
+                raise CycleError("There is no cycle in progress")
             if self._phase == "work":
                 LOGGER.info("Cycle cancelled without a record")
             self._reset_to_idle(keep_last=True)
@@ -213,7 +213,7 @@ class CycleManager:
         """
         with self._lock:
             if self._phase != "work":
-                raise CycleError("当前没有正在进行的工作周期")
+                raise CycleError("There is no work segment in progress")
             self._enter_feedback()
             return self.snapshot()
 
@@ -266,7 +266,7 @@ class CycleManager:
     def submit_feedback(self, status, content, next_action):
         with self._lock:
             if self._phase != "feedback":
-                raise CycleError("现在没有等待反馈的工作段")
+                raise CycleError("There is no work segment waiting for feedback")
             status = self._validate_status(status)
             next_action = self._validate_next_action(next_action)
             content = self._validate_content(content)
@@ -294,7 +294,7 @@ class CycleManager:
                 try:
                     self._tasks.complete(self._task["id"], content)
                 except Exception as exc:
-                    warnings.append(f"记录已保存，但 dstask 标记完成失败：{exc}")
+                    warnings.append(f"Saved, but marking the task done in dstask failed: {exc}")
             self._warnings = warnings
 
             finished_task = dict(self._task) if self._task else None
@@ -329,7 +329,7 @@ class CycleManager:
     def skip_break(self):
         with self._lock:
             if self._phase != "break":
-                raise CycleError("当前不在休息中")
+                raise CycleError("There is no break in progress")
             self._reset_to_idle(keep_last=True)
             self._save()
             return self.snapshot()
@@ -337,22 +337,22 @@ class CycleManager:
     @staticmethod
     def _validate_status(status):
         if status not in STATUSES:
-            raise ValidationError("status 必须是 " + " / ".join(STATUSES))
+            raise ValidationError("status must be one of " + " / ".join(STATUSES))
         return status
 
     @staticmethod
     def _validate_next_action(next_action):
         if next_action not in NEXT_ACTIONS:
-            raise ValidationError("next_action 必须是 " + " / ".join(NEXT_ACTIONS))
+            raise ValidationError("next_action must be one of " + " / ".join(NEXT_ACTIONS))
         return next_action
 
     @staticmethod
     def _validate_content(content):
         if not isinstance(content, str) or not content.strip():
-            raise ValidationError("反馈内容不能为空")
+            raise ValidationError("Feedback cannot be empty")
         content = content.strip()
         if len(content) > 500:
-            raise ValidationError("反馈内容请控制在 500 字以内")
+            raise ValidationError("Keep feedback under 500 characters")
         return content
 
     def _session_id(self):

@@ -28,9 +28,9 @@ def _run(*args):
             timeout=DSTASK_TIMEOUT,
         )
     except FileNotFoundError:
-        raise DstaskError("找不到 dstask 命令，确认它已在 PATH 中")
+        raise DstaskError("dstask was not found in PATH")
     except subprocess.TimeoutExpired:
-        raise DstaskError("dstask 命令超时")
+        raise DstaskError("dstask timed out")
 
 
 def _clean(result):
@@ -41,11 +41,11 @@ class DstaskTasks:
     def _list(self, command):
         result = _run(command, "--")
         if result.returncode != 0:
-            raise DstaskError(_clean(result) or "读取任务失败")
+            raise DstaskError(_clean(result) or "Could not read tasks")
         try:
             return json.loads(result.stdout or "[]")
         except json.JSONDecodeError:
-            raise DstaskError("无法解析 dstask 输出")
+            raise DstaskError("Could not parse the dstask output")
 
     @staticmethod
     def _public(task):
@@ -85,19 +85,19 @@ class DstaskTasks:
         result = _run("add", description, "--")
         output = _clean(result)
         if result.returncode != 0:
-            raise DstaskError(output or "添加任务失败")
+            raise DstaskError(output or "Adding the task failed")
         match = re.search(r"Added (\d+):", output)
         if not match:
-            raise DstaskError("无法确定新任务的编号")
+            raise DstaskError("Could not determine the new task id")
         task_id = match.group(1)
         if project:
             modify = _run("modify", task_id, f"project:{project}", "--")
             if modify.returncode != 0:
-                raise DstaskError(_clean(modify) or "设置 project 失败")
+                raise DstaskError(_clean(modify) or "Could not set the project")
         for task in self._list("show-open"):
             if str(task.get("id")) == task_id:
                 return self._public(task)
-        raise DstaskError("添加后找不到新任务")
+        raise DstaskError("The new task could not be found after adding it")
 
     def complete(self, task_id, feedback=""):
         """Mark a dstask task done. `task_id` is the short numeric id."""
@@ -107,11 +107,11 @@ class DstaskTasks:
         args.append("--")
         result = _run(*args)
         if result.returncode != 0:
-            raise DstaskError(_clean(result) or "标记任务完成失败")
+            raise DstaskError(_clean(result) or "Could not mark the task as done")
 
     def sync(self):
         result = _run("sync")
         output = _clean(result)
         if result.returncode != 0:
-            raise DstaskError(output or "同步失败")
+            raise DstaskError(output or "Sync failed")
         return output

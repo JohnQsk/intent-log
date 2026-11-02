@@ -123,7 +123,7 @@ class CycleTests(unittest.TestCase):
 
     def test_feedback_writes_one_row_and_starts_break(self):
         self.finish_work()
-        snapshot = self.cycle.submit_feedback("progress", "第二问的符号处理想清楚了", "same_task")
+        snapshot = self.cycle.submit_feedback("progress", "Figured out the edge case in question 2", "same_task")
         self.assertEqual(snapshot["phase"], "break")
         self.assertEqual(snapshot["break_reason"], "same_task")
 
@@ -133,7 +133,7 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(record["schema_version"], 1)
         self.assertEqual(record["task_title"], "implement LRU cache")
         self.assertEqual(record["status"], "progress")
-        self.assertEqual(record["content"], "第二问的符号处理想清楚了")
+        self.assertEqual(record["content"], "Figured out the edge case in question 2")
         self.assertEqual(record["next_action"], "same_task")
         self.assertEqual(record["work_seconds"], 20 * 60)
         self.assertTrue(record["session_id"])
@@ -141,13 +141,13 @@ class CycleTests(unittest.TestCase):
 
     def test_task_done_completes_dstask_once(self):
         self.finish_work()
-        snapshot = self.cycle.submit_feedback("task_done", "全部做完", "choose_task")
-        self.assertEqual(self.tasks.completed, [("7", "全部做完")])
+        snapshot = self.cycle.submit_feedback("task_done", "All done", "choose_task")
+        self.assertEqual(self.tasks.completed, [("7", "All done")])
         self.assertEqual(snapshot["warnings"], [])
 
     def test_choose_task_and_finish_differ(self):
         self.finish_work()
-        snapshot = self.cycle.submit_feedback("progress", "还行", "choose_task")
+        snapshot = self.cycle.submit_feedback("progress", "Made progress", "choose_task")
         self.assertEqual(snapshot["phase"], "break")
         self.assertEqual(snapshot["last_task"]["title"], "implement LRU cache")
 
@@ -156,7 +156,7 @@ class CycleTests(unittest.TestCase):
         self.assertIsNone(skipped["task"])
 
         self.finish_work()
-        snapshot = self.cycle.submit_feedback("progress", "收工", "finish")
+        snapshot = self.cycle.submit_feedback("progress", "Stopping for today", "finish")
         self.assertEqual(snapshot["phase"], "idle")
         self.assertEqual(len(self.store.records()), 2)
 
@@ -170,7 +170,7 @@ class CycleTests(unittest.TestCase):
     def test_same_task_twice_makes_two_rows(self):
         for _ in range(2):
             self.finish_work()
-            self.cycle.submit_feedback("progress", "又一次", "same_task")
+            self.cycle.submit_feedback("progress", "Another round", "same_task")
             self.cycle.skip_break()
         self.assertEqual(len(self.store.records()), 2)
 
@@ -181,7 +181,7 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(snapshot["phase"], "feedback")
         self.assertEqual(snapshot["task"]["uuid"], "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
         # Submitting after a restart still writes the record.
-        restarted.submit_feedback("blocked", "重启后补记", "choose_task")
+        restarted.submit_feedback("blocked", "Recorded after a restart", "choose_task")
         self.assertEqual(len(self.store.records()), 1)
 
     def test_running_work_survives_restart_without_offline_time(self):
@@ -233,12 +233,12 @@ class CycleTests(unittest.TestCase):
         self.clock.advance(60)
         broken.tick()
         with self.assertRaises(OSError):
-            broken.submit_feedback("progress", "写不进去", "choose_task")
+            broken.submit_feedback("progress", "Cannot write", "choose_task")
         self.assertEqual(broken.snapshot()["phase"], "feedback")
 
     def test_jsonl_file_shape(self):
         self.finish_work()
-        self.cycle.submit_feedback("progress", "有推进", "finish")
+        self.cycle.submit_feedback("progress", "Made progress", "finish")
         line = (self.root / "sessions.jsonl").read_text(encoding="utf-8").strip()
         record = json.loads(line)
         for key in (

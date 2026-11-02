@@ -1,24 +1,24 @@
 const STATUS_OPTIONS = [
-  ['progress', '有推进'],
-  ['task_done', '任务完成'],
-  ['blocked', '卡住了'],
-  ['interrupted', '被打断'],
-  ['off_task', '跑偏了'],
+  ['progress', 'Progress'],
+  ['task_done', 'Task done'],
+  ['blocked', 'Blocked'],
+  ['interrupted', 'Interrupted'],
+  ['off_task', 'Off task'],
 ];
 
 const STATUS_LABEL = Object.fromEntries(STATUS_OPTIONS);
 const NEXT_LABEL = {
-  same_task: '继续这个任务',
-  choose_task: '换个任务',
-  finish: '今天先到这',
+  same_task: 'Keep this task',
+  choose_task: 'Pick another',
+  finish: 'Stop for today',
 };
 const PHASE_LABEL = {
-  idle: '空闲',
-  work: '工作进行中',
-  work_paused: '已暂停',
-  feedback: '等待反馈',
-  break: '休息中',
-  break_paused: '休息暂停',
+  idle: 'Idle',
+  work: 'Working',
+  work_paused: 'Paused',
+  feedback: 'Waiting for feedback',
+  break: 'On a break',
+  break_paused: 'Break paused',
 };
 
 const el = (id) => document.getElementById(id);
@@ -34,9 +34,7 @@ function two(n) { return String(n).padStart(2, '0'); }
 
 function mmss(total) {
   total = Math.max(0, Math.round(total));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return two(m) + ':' + two(s);
+  return two(Math.floor(total / 60)) + ':' + two(total % 60);
 }
 
 function humanDuration(total) {
@@ -44,9 +42,9 @@ function humanDuration(total) {
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  if (h) return h + ' 小时 ' + m + ' 分';
-  if (m) return m + ' 分' + (s ? ' ' + s + ' 秒' : '');
-  return s + ' 秒';
+  if (h) return h + 'h ' + m + 'm';
+  if (m) return m + 'm' + (s ? ' ' + s + 's' : '');
+  return s + 's';
 }
 
 function clockTime(iso) {
@@ -63,7 +61,7 @@ async function api(path, options) {
   const response = await fetch(path, options);
   let body = {};
   try { body = await response.json(); } catch (e) { body = {}; }
-  if (!response.ok) throw new Error(body.error || '请求失败 (' + response.status + ')');
+  if (!response.ok) throw new Error(body.error || 'Request failed (' + response.status + ')');
   return body;
 }
 
@@ -135,31 +133,27 @@ function render(s) {
   const c = s.cycle;
   const phase = c.phase;
 
-  const dot = el('phase-dot');
-  dot.className = 'dot ' + phaseClass(phase);
+  el('phase-dot').className = 'dot ' + phaseClass(phase);
   el('phase-label').textContent = PHASE_LABEL[phase] || phase;
+  el('version').textContent = s.version ? 'v' + s.version : '';
 
   el('today').textContent = s.today.sessions
-    ? '今天 ' + s.today.sessions + ' 段 · ' + humanDuration(s.today.work_seconds)
-    : '今天还没有记录';
+    ? s.today.sessions + (s.today.sessions === 1 ? ' session' : ' sessions') +
+      ' today · ' + humanDuration(s.today.work_seconds)
+    : 'No sessions yet today';
 
-  // current / break / feedback visibility
   el('current').hidden = !(phase === 'work' || phase === 'work_paused');
   el('break').hidden = !(phase === 'break' || phase === 'break_paused');
   el('feedback').hidden = phase !== 'feedback';
   el('picker').hidden = phase !== 'idle';
 
-  if (c.task) {
-    const project = c.task.project ? ' · ' + c.task.project : '';
-    el('current-task').textContent = c.task.title + project;
-  } else {
-    el('current-task').textContent = '（没选任务，自己知道在做什么也行）';
-  }
-  el('pause-btn').textContent = phase === 'work_paused' ? '继续' : '暂停';
-  const planned = c.planned_seconds;
-  el('current-sub').textContent = '已工作 ' + humanDuration(c.work_seconds) +
-    ' · 计划 ' + humanDuration(planned) +
-    (phase === 'work_paused' ? ' · 暂停中，不计时' : '');
+  el('current-task').textContent = c.task
+    ? c.task.title + (c.task.project ? ' · ' + c.task.project : '')
+    : '(no task selected, that is fine)';
+  el('pause-btn').textContent = phase === 'work_paused' ? 'Resume' : 'Pause';
+  el('current-sub').textContent = 'Worked ' + humanDuration(c.work_seconds) +
+    ' of ' + humanDuration(c.planned_seconds) +
+    (phase === 'work_paused' ? ' · paused, not counting' : '');
   el('warn').textContent = (c.warnings || []).join(' ');
 
   tick();
@@ -170,7 +164,7 @@ function render(s) {
       resetFeedbackForm();
       loadDraft();
       el('feedback-sub').textContent = (c.task ? c.task.title + ' · ' : '') +
-        '实际工作 ' + humanDuration(c.work_seconds);
+        'worked ' + humanDuration(c.work_seconds);
       el('feedback-content').focus();
     }
   } else {
@@ -179,14 +173,15 @@ function render(s) {
 
   if (phase === 'idle') {
     const hint = el('last-hint');
-    if (c.last_task && c.last_task.title) {
+    const last = c.last_task;
+    if (last && last.title) {
       hint.hidden = false;
       hint.replaceChildren();
       const button = document.createElement('button');
       button.className = 'ghost small';
-      button.textContent = '继续「' + c.last_task.title + '」';
-      button.addEventListener('click', () => startCycle(c.last_task.uuid));
-      hint.append('上一段：', button);
+      button.textContent = 'Continue "' + last.title + '"';
+      button.addEventListener('click', () => startCycle(last.uuid));
+      hint.append('Last segment: ', button);
     } else {
       hint.hidden = true;
     }
@@ -226,7 +221,7 @@ async function loadTasks() {
     if (!data.tasks.length) {
       const li = document.createElement('li');
       li.className = 'empty';
-      li.textContent = '没有待办任务';
+      li.textContent = 'No open tasks';
       list.append(li);
       return;
     }
@@ -243,7 +238,7 @@ async function loadTasks() {
       main.append(title, meta);
       const button = document.createElement('button');
       button.className = 'start';
-      button.textContent = '开始 20 分钟';
+      button.textContent = 'Start 20 min';
       button.addEventListener('click', () => startCycle(task.uuid));
       li.append(main, button);
       list.append(li);
@@ -259,16 +254,13 @@ async function loadHistory() {
     const body = el('history').querySelector('tbody');
     body.replaceChildren();
     el('history-summary').textContent = data.records.length
-      ? data.records.length + ' 段 · ' + humanDuration(data.summary.work_seconds)
-      : '这天没有记录';
+      ? data.records.length + (data.records.length === 1 ? ' session · ' : ' sessions · ') +
+        humanDuration(data.summary.work_seconds)
+      : 'No records for this day';
     for (const record of data.records) {
       const row = document.createElement('tr');
-      const cells = [
-        clockTime(record.started_at),
-        clockTime(record.ended_at),
-        humanDuration(record.work_seconds),
-      ];
-      cells.forEach((text, index) => {
+      [clockTime(record.started_at), clockTime(record.ended_at),
+       humanDuration(record.work_seconds)].forEach((text) => {
         const td = document.createElement('td');
         td.className = 'num';
         td.textContent = text;
@@ -310,10 +302,42 @@ async function loadHistory() {
 async function startCycle(taskUuid) {
   showError('');
   try {
-    const s = await post('/api/cycle/start', { task_id: taskUuid || null });
-    render(s);
+    render(await post('/api/cycle/start', { task_id: taskUuid || null }));
   } catch (error) {
     showError(error.message);
+  }
+}
+
+// -------------------------------------------------------------------- sync
+
+function renderSync(data) {
+  const config = data.config || {};
+  el('sync-remote').value = config.remote || '';
+  const bits = [];
+  if (!config.git) {
+    bits.push('No git repository at ' + (config.path || '~/.dstask'));
+  } else {
+    if (config.branch) bits.push('branch ' + config.branch);
+    if (config.behind !== null && config.behind !== undefined) bits.push(config.behind + ' behind');
+    if (config.ahead !== null && config.ahead !== undefined) bits.push(config.ahead + ' ahead');
+    if (config.dirty) bits.push('uncommitted changes');
+    if (!config.remote) bits.push('no origin remote');
+  }
+  el('sync-status').textContent = bits.join(' · ');
+
+  const output = el('sync-output');
+  if (data.last) {
+    output.hidden = false;
+    output.textContent = (data.last.ok ? 'Last sync ' : 'Last sync failed ') +
+      clockTime(data.last.at) + '\n' + (data.last.message || '');
+  }
+}
+
+async function loadSync() {
+  try {
+    renderSync(await api('/api/sync'));
+  } catch (error) {
+    el('sync-status').textContent = 'Could not read the sync config';
   }
 }
 
@@ -322,7 +346,7 @@ async function startCycle(taskUuid) {
 document.querySelectorAll('#current-actions button').forEach((button) => {
   button.addEventListener('click', async () => {
     const action = button.dataset.action;
-    if (action === 'cancel' && !window.confirm('放弃这一段？不会写入记录。')) return;
+    if (action === 'cancel' && !window.confirm('Discard this segment? Nothing will be recorded.')) return;
     showError('');
     try {
       render(await post('/api/cycle/' + action));
@@ -346,12 +370,12 @@ el('feedback-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const picked = document.querySelector('input[name="status"]:checked');
   if (!picked) {
-    showError('先选一个状态');
+    showError('Pick a status first');
     return;
   }
   const content = el('feedback-content').value.trim();
   if (!content) {
-    showError('写一句话，哪怕只有几个字');
+    showError('Write one line, even a few words is enough');
     el('feedback-content').focus();
     return;
   }
@@ -394,20 +418,45 @@ el('add-form').addEventListener('submit', async (event) => {
 });
 
 el('refresh-tasks').addEventListener('click', loadTasks);
-el('sync-tasks').addEventListener('click', async () => {
-  showError('');
-  try {
-    await post('/api/sync');
-    loadTasks();
-  } catch (error) {
-    showError(error.message);
-  }
-});
 
 el('history-date').value = historyDay;
 el('history-date').addEventListener('change', () => {
   historyDay = el('history-date').value || historyDay;
   loadHistory();
+});
+
+el('sync-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const url = el('sync-remote').value.trim();
+  if (!url) {
+    showError('Enter a git URL for the dstask repository');
+    return;
+  }
+  if (!window.confirm('Point dstask origin at\n' + url + '\n\nThis changes only the remote URL; task data is untouched.')) {
+    return;
+  }
+  showError('');
+  try {
+    renderSync(await post('/api/sync/remote', { url: url }));
+  } catch (error) {
+    showError(error.message);
+  }
+});
+
+el('sync-now').addEventListener('click', async () => {
+  const button = el('sync-now');
+  button.disabled = true;
+  showError('');
+  try {
+    const result = await post('/api/sync');
+    renderSync(result);
+    loadTasks();
+  } catch (error) {
+    showError(error.message);
+    loadSync();
+  } finally {
+    button.disabled = false;
+  }
 });
 
 // --------------------------------------------------------------------- boot
@@ -417,6 +466,7 @@ refresh().then(() => {
   if (state && state.cycle.phase === 'idle') loadTasks();
 });
 loadHistory();
+loadSync();
 setInterval(tick, 250);
 setInterval(refresh, 1000);
 setInterval(() => {

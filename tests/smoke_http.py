@@ -75,11 +75,21 @@ def main():
 
         # static page + read-only task listing
         html = request("/").decode("utf-8")
-        assert "<title>20 分钟</title>" in html
+        assert "<title>intent-log</title>" in html
         checks.append("GET / serves the page")
         tasks = request("/api/tasks")
         assert isinstance(tasks["tasks"], list)
         checks.append(f"GET /api/tasks lists {len(tasks['tasks'])} open dstask tasks")
+
+        # sync config is read-only here: POST /api/sync would hit the network
+        sync = request("/api/sync")
+        assert isinstance(sync["config"], dict)
+        checks.append(
+            "GET /api/sync reports origin: " + str(sync["config"]["remote"])
+            + " on branch " + str(sync["config"]["branch"])
+        )
+        assert "version" in state()
+        checks.append("state reports version " + state()["version"])
 
         # start -> work
         started = request("/api/cycle/start", {})
@@ -112,7 +122,7 @@ def main():
 
         after = request("/api/cycle/feedback", {
             "status": "progress",
-            "content": "冒烟测试：整条链路跑通",
+            "content": "Smoke test: end-to-end path works",
             "next_action": "same_task",
         })
         assert after["cycle"]["phase"] == "break", after
@@ -127,7 +137,7 @@ def main():
         record = records[0]
         assert record["status"] == "progress"
         assert record["work_seconds"] >= 3, record
-        assert record["content"] == "冒烟测试：整条链路跑通"
+        assert record["content"] == "Smoke test: end-to-end path works"
         assert record["schema_version"] == 1
         checks.append(f"JSONL row recorded (work_seconds={record['work_seconds']})")
 
@@ -147,6 +157,14 @@ def main():
         except urllib.error.HTTPError as exc:
             assert exc.code == 403
         checks.append("POST without X-Intent-Log rejected with 403")
+
+        # a bad remote URL must be refused before git is ever called
+        try:
+            request("/api/sync/remote", {"url": "ftp://example.com/tasks.git"})
+            raise AssertionError("an invalid remote URL was accepted")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400
+        checks.append("invalid sync remote rejected with 400")
     finally:
         server.terminate()
         try:

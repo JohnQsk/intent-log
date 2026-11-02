@@ -221,3 +221,27 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
   main { padding: 14px 12px 50px; }
   .card { padding: 14px; }
 }
+
+.version { color: #9aa4b1; font-size: 12px; }
+
+#sync-card code {
+  background: #f2f4f7;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.sync-output {
+  background: #f7f8fa;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow: auto;
+  margin: 12px 0 0;
+  color: var(--muted);
+}

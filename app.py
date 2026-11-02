@@ -12,14 +12,17 @@ import json
 import logging
 import threading
 import webbrowser
-from datetime import date
+from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from cycle import CycleError, CycleManager, TimerThread, ValidationError
 from store import SessionStore
+from syncer import DstaskRepo, SyncError
 from tasks import DstaskError, DstaskTasks
+
+VERSION = "0.1.1"
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -31,16 +34,18 @@ class IntentLogServer(ThreadingHTTPServer):
     allow_reuse_address = False
     daemon_threads = True
 
-    def __init__(self, address, handler, cycle, tasks, store, public_url=""):
+    def __init__(self, address, handler, cycle, tasks, store, repo, public_url=""):
         super().__init__(address, handler)
         self.cycle = cycle
         self.tasks = tasks
         self.store = store
+        self.repo = repo
         self.public_url = public_url
+        self.last_sync = None
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "IntentLog/0.1"
+    server_version = f"IntentLog/{VERSION}"
 
     def log_message(self, _format, *_args):
         pass
@@ -70,27 +75,34 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
-            raise ValidationError("Content-Length 无效")
+            raise ValidationError("Invalid Content-Length")
         if length < 0 or length > MAX_BODY:
-            raise ValidationError("请求体过大")
+            raise ValidationError("Request body is too large")
         if length == 0:
             return {}
         if not self.headers.get("Content-Type", "").startswith("application/json"):
-            raise ValidationError("需要 JSON 请求体")
+            raise ValidationError("A JSON body is required")
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ValidationError("JSON 解析失败")
+            raise ValidationError("Could not parse the JSON body")
         if not isinstance(payload, dict):
-            raise ValidationError("JSON 必须是对象")
+            raise ValidationError("The JSON body must be an object")
         return payload
 
     def _state_payload(self):
         cycle_state = self.server.cycle.snapshot()
         today = date.today().isoformat()
         return {
+            "version": VERSION,
             "cycle": cycle_state,
             "today": self.server.store.summary_for(today),
+        }
+
+    def _sync_payload(self):
+        return {
+            "config": self.server.repo.status(),
+            "last": self.server.last_sync,
         }
 
     # ---------------------------------------------------------------- routes
@@ -105,6 +117,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"tasks": self.server.tasks.list_open()})
             elif path == "/api/tasks/completed":
                 self._send_json({"tasks": self.server.tasks.list_completed()})
+            elif path == "/api/sync":
+                self._send_json(self._sync_payload())
             elif path == "/api/records":
                 query = parse_qs(parts.query)
                 day = (query.get("date") or [date.today().isoformat()])[0]
@@ -131,12 +145,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
             else:
                 self._error("Not found", 404)
-        except (CycleError, ValidationError) as exc:
-            self._error(str(exc), 409 if isinstance(exc, CycleError) else 400)
+        except (CycleError, ValidationError, SyncError) as exc:
+            status = 409 if isinstance(exc, CycleError) else 400
+            self._error(str(exc), status)
         except DstaskError as exc:
             self._error(str(exc), 502)
         except OSError as exc:
-            self._error(f"读取失败：{exc}", 500)
+            self._error(f"Read failed: {exc}", 500)
 
     def do_POST(self):
         if self.headers.get("X-Intent-Log") != "1":
@@ -162,35 +177,68 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("content"),
                     payload.get("next_action"),
                 )
-                self._send_json({"cycle": state, "today": self.server.store.summary_for(date.today().isoformat())})
+                self._send_json(
+                    {
+                        "cycle": state,
+                        "today": self.server.store.summary_for(date.today().isoformat()),
+                    }
+                )
                 return
             elif path == "/api/tasks":
                 description = payload.get("description")
                 project = payload.get("project") or ""
                 if not isinstance(description, str) or not description.strip():
-                    raise ValidationError("任务描述不能为空")
+                    raise ValidationError("The task description cannot be empty")
                 if len(description.strip()) > 1000:
-                    raise ValidationError("任务描述过长")
+                    raise ValidationError("The task description is too long")
                 if not isinstance(project, str) or len(project) > 100:
-                    raise ValidationError("project 无效")
+                    raise ValidationError("Invalid project name")
                 task = self.server.tasks.add(description.strip(), project.strip())
                 self._send_json({"task": task}, 201)
                 return
             elif path == "/api/sync":
-                self._send_json({"message": self.server.tasks.sync()})
+                output = self.server.repo.sync()
+                self.server.last_sync = {
+                    "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "ok": True,
+                    "message": output or "Already up to date",
+                }
+                self._send_json({"output": output, **self._sync_payload()})
+                return
+            elif path == "/api/sync/remote":
+                url = payload.get("url")
+                status = self.server.repo.set_remote(url)
+                self._send_json({"config": status, "last": self.server.last_sync})
                 return
             else:
                 self._error("Not found", 404)
                 return
-            self._send_json({"cycle": state, "today": self.server.store.summary_for(date.today().isoformat())})
+            self._send_json(
+                {
+                    "cycle": state,
+                    "today": self.server.store.summary_for(date.today().isoformat()),
+                }
+            )
         except ValidationError as exc:
             self._error(str(exc), 400)
         except CycleError as exc:
             self._error(str(exc), 409)
+        except SyncError as exc:
+            message = str(exc)
+            if path == "/api/sync":
+                self.server.last_sync = {
+                    "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "ok": False,
+                    "message": message,
+                }
+            self._error(message, 400 if path == "/api/sync/remote" else 502)
         except DstaskError as exc:
             self._error(str(exc), 502)
         except OSError as exc:
-            self._error(f"写入失败，反馈内容仍保留在页面上，可以重试：{exc}", 500)
+            self._error(
+                f"Write failed; your feedback is still on the page and can be retried: {exc}",
+                500,
+            )
 
 
 def main():
@@ -206,7 +254,7 @@ def main():
     args = parser.parse_args()
 
     if args.work_seconds < 1 or args.break_seconds < 0:
-        parser.error("--work-seconds 必须 >= 1，--break-seconds 必须 >= 0")
+        parser.error("--work-seconds must be >= 1 and --break-seconds >= 0")
 
     logging.basicConfig(
         level=logging.INFO,
@@ -219,6 +267,7 @@ def main():
     data_dir.mkdir(parents=True, exist_ok=True)
     store = SessionStore(data_dir / "sessions.jsonl")
     tasks = DstaskTasks()
+    repo = DstaskRepo()
     cycle = CycleManager(
         store=store,
         tasks=tasks,
@@ -228,7 +277,9 @@ def main():
     )
 
     try:
-        server = IntentLogServer((args.host, args.port), Handler, cycle, tasks, store)
+        server = IntentLogServer(
+            (args.host, args.port), Handler, cycle, tasks, store, repo
+        )
     except OSError as exc:
         logger.error("Cannot bind %s:%s (%s)", args.host, args.port, exc)
         return 1
@@ -247,7 +298,7 @@ def main():
     timer = TimerThread(cycle)
     timer.start()
 
-    logger.info("Intent-Log is running: %s", url)
+    logger.info("intent-log %s is running: %s", VERSION, url)
     logger.info("Data: %s", data_dir)
     if not args.no_browser:
         webbrowser.open(url)
