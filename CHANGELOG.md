@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-11-02
+
+### Fixed
+
+- The "Continue \"<task>\"" button no longer offers a task that dstask has
+  already marked done. The last segment remembers whether its feedback marked
+  the task done, the page cross-checks the open task list, and a finished task
+  is shown as text with a `(done)` suffix instead of a button.
+
+### Removed
+
+- Nothing in the code. The predecessor projects `task-quick-web` and
+  `rest-reminder` are archived on GitHub; their features live here.
+
 ## [0.1.2] - 2026-11-02
 
 ### Added

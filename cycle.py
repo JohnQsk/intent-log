@@ -298,6 +298,10 @@ class CycleManager:
             self._warnings = warnings
 
             finished_task = dict(self._task) if self._task else None
+            if finished_task:
+                # Remember that dstask no longer lists this task, so the page
+                # never offers a "Continue" button that cannot work.
+                finished_task["done"] = status == "task_done"
             if next_action == "finish":
                 self._reset_to_idle(keep_last=False)
                 self._last_task = finished_task

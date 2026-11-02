@@ -248,6 +248,18 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(self.store.summary_for(self.store.days()[0])["sessions"], 1)
 
 
+    def test_task_done_stops_the_continue_offer(self):
+        self.finish_work()
+        snapshot = self.cycle.submit_feedback("task_done", "完成", "choose_task")
+        self.assertTrue(snapshot["last_task"]["done"])
+        self.assertNotIn("done", snapshot["task"] or {})
+
+    def test_progress_keeps_the_continue_offer(self):
+        self.finish_work()
+        snapshot = self.cycle.submit_feedback("progress", "还要继续", "same_task")
+        self.assertFalse(snapshot["last_task"]["done"])
+
+
     def test_jsonl_file_shape(self):
         self.finish_work()
         self.cycle.submit_feedback("progress", "Made progress", "finish")

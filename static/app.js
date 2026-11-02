@@ -27,6 +27,7 @@ let state = null;
 let lastPhase = null;
 let draftKey = null;
 let historyDay = new Date().toLocaleDateString('sv-SE');
+let openTaskIds = null;
 
 // ---------------------------------------------------------------- utilities
 
@@ -174,7 +175,11 @@ function render(s) {
   if (phase === 'idle') {
     const hint = el('last-hint');
     const last = c.last_task;
-    if (last && last.title) {
+    // Never offer to continue a task that dstask no longer lists: it was
+    // completed in the feedback form, or deleted elsewhere.
+    const stillOpen = last && !last.done &&
+      (openTaskIds === null || openTaskIds.has(last.uuid));
+    if (stillOpen && last.title) {
       hint.hidden = false;
       hint.replaceChildren();
       const button = document.createElement('button');
@@ -182,6 +187,11 @@ function render(s) {
       button.textContent = 'Continue "' + last.title + '"';
       button.addEventListener('click', () => startCycle(last.uuid));
       hint.append('Last segment: ', button);
+    } else if (last && last.title) {
+      hint.hidden = false;
+      hint.replaceChildren();
+      hint.append('Last segment: ' + last.title +
+        (last.done ? ' (done)' : ' (no longer open)'));
     } else {
       hint.hidden = true;
     }
@@ -216,6 +226,7 @@ async function refresh() {
 async function loadTasks() {
   try {
     const data = await api('/api/tasks');
+    openTaskIds = new Set(data.tasks.map((task) => task.uuid));
     const list = el('tasks');
     list.replaceChildren();
     if (!data.tasks.length) {
@@ -223,6 +234,7 @@ async function loadTasks() {
       li.className = 'empty';
       li.textContent = 'No open tasks';
       list.append(li);
+      if (state && state.cycle.phase === 'idle') render(state);
       return;
     }
     for (const task of data.tasks) {
@@ -243,6 +255,7 @@ async function loadTasks() {
       li.append(main, button);
       list.append(li);
     }
+    if (state && state.cycle.phase === 'idle') render(state);
   } catch (error) {
     showError(error.message);
   }
